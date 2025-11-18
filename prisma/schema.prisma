@@ -1,0 +1,101 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  EMPLOYEE
+  ADMIN
+}
+
+model Company {
+  id            Int          @id @default(autoincrement())
+  name          String
+  addressLine1  String
+  addressLine2  String?
+  city          String
+  state         String
+  postalCode    String
+  country       String       @default("US")
+  phone         String?
+
+  employees     Employee[]
+  jobs          Job[]
+  timeEntries   TimeEntry[]
+
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+}
+
+model Employee {
+  id           Int          @id @default(autoincrement())
+  company      Company      @relation(fields: [companyId], references: [id])
+  companyId    Int
+
+  email        String       @unique
+  name         String
+  role         Role         @default(EMPLOYEE)
+  passwordHash String
+
+  timeEntries  TimeEntry[]
+
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  @@index([companyId])
+}
+
+model Job {
+  id           Int          @id @default(autoincrement())
+  company      Company      @relation(fields: [companyId], references: [id])
+  companyId    Int
+
+  name         String
+
+  addressLine1 String
+  addressLine2 String?
+  city         String
+  state        String
+  postalCode   String
+  country      String       @default("US")
+
+  jobNote      String?      // admin notes for employees
+
+  active       Boolean      @default(true)
+
+  timeEntries  TimeEntry[]
+
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  @@index([companyId])
+}
+
+model TimeEntry {
+  id          Int       @id @default(autoincrement())
+
+  company     Company   @relation(fields: [companyId], references: [id])
+  companyId   Int
+
+  employee    Employee  @relation(fields: [employeeId], references: [id])
+  employeeId  Int
+
+  job         Job       @relation(fields: [jobId], references: [id])
+  jobId       Int
+
+  start       DateTime
+  end         DateTime
+  durationMs  Int
+
+  timeNote    String?   // employee note for admin
+
+  createdAt   DateTime  @default(now())
+
+  @@index([companyId, start])
+  @@index([employeeId, start])
+  @@index([jobId, start])
+}
