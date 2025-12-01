@@ -26,6 +26,7 @@ model Company {
   employees     Employee[]
   jobs          Job[]
   timeEntries   TimeEntry[]
+  auditLogs     AuditLog[]
 
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
@@ -46,7 +47,17 @@ model Employee {
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
 
+  deletedAt     DateTime?   @db.DateTime
+  deletedBy     Int?
+  deletedByUser Employee?   @relation("DeletedEmployeesBy", fields: [deletedBy], references: [id])
+
+  deletedJobs   Job[]        @relation("DeletedJobsBy")
+  deletedEmployees Employee[] @relation("DeletedEmployeesBy")
+
+  auditLogs     AuditLog[]
+
   @@index([companyId])
+  @@index([deletedAt])
 }
 
 model Job {
@@ -72,7 +83,12 @@ model Job {
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
 
+  deletedAt    DateTime?    @db.DateTime
+  deletedBy    Int?
+  deletedByUser Employee?   @relation("DeletedJobsBy", fields: [deletedBy], references: [id])
+
   @@index([companyId])
+  @@index([deletedAt])
 }
 
 model TimeEntry {
@@ -98,4 +114,22 @@ model TimeEntry {
   @@index([companyId, start])
   @@index([employeeId, start])
   @@index([jobId, start])
+}
+
+model AuditLog {
+  id          Int       @id @default(autoincrement())
+  companyId   Int       // whose data this applies to
+  employeeId  Int       // who performed the action
+  action      String    // e.g. "JOB_ARCHIVED", "EMPLOYEE_CREATED", etc.
+  entityType  String    // "job", "employee", "time_entry", "company"
+  entityId    Int
+  timestamp   DateTime  @default(now())
+  metadata    Json?
+
+  employee    Employee  @relation(fields: [employeeId], references: [id])
+  company     Company   @relation(fields: [companyId], references: [id])
+
+  @@index([companyId])
+  @@index([employeeId])
+  @@index([entityType, entityId])
 }

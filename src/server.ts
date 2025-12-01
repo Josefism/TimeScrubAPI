@@ -5,7 +5,8 @@ import bcrypt from "bcrypt";
 import { PrismaClient, Role } from "@prisma/client";
 import authRoutes from "./routes/auth";
 import { requireAuth, AuthenticatedRequest } from "./middleware/auth";
-
+import { logAudit } from "./services/audit";
+import { before } from "node:test";
 
 const prisma = new PrismaClient();
 const app = express();
@@ -57,6 +58,28 @@ app.get("/companies/me", requireAuth, async (req: AuthenticatedRequest, res) => 
   res.json(company);
 });
 
+// --- Employees ---
+
+// List employees for the current company (admin only)
+app.get("/admin/employees", requireAuth, async (req: AuthenticatedRequest, res) => {
+  const user = req.user!
+  
+  if (user.role !== "ADMIN") {
+    return res.status(403).json({ error: "Forbidden" })
+  }
+    const employees = await prisma.employee.findMany({
+    where: { companyId: user.companyId, deletedAt: null },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      role: true,
+    },
+  });
+
+  res.json(employees);
+});
+
 // Admin create employee
 app.post("/admin/employees", requireAuth, async (req: AuthenticatedRequest, res) => {
   const user = req.user!
@@ -98,8 +121,123 @@ app.post("/admin/employees", requireAuth, async (req: AuthenticatedRequest, res)
     },
   })
 
+  await logAudit({
+    companyId: user.companyId,
+    employeeId: user.id,
+    action: "EMPLOYEE_CREATED",
+    entityType: "EMPLOYEE",
+    entityId: employee.id,
+    metadata: {
+      email,
+      name,
+      role,
+    },
+  });
+
   res.status(201).json(employee)
 })
+
+// Edit an employee (admin only)
+app.put("/admin/employees/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
+  const user = req.user!;
+
+  if (user.role !== "ADMIN") {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  const id = Number(req.params.id);
+  const { name, role, email } = req.body;
+
+  // fetch before state
+  const before = await prisma.employee.findUnique({
+    where: { id }
+  })
+
+  if (!before || before.companyId !== user.companyId) {
+    return res.status(404).json({ error: "Employee not found" })
+  }
+
+  const employee = await prisma.employee.update({
+    where: { id },
+    data: {
+      name,
+      role,
+      email,
+    },
+  });
+
+  await logAudit({
+    companyId: user.companyId,
+    employeeId: user.id,
+    action: "EMPLOYEE_UPDATED",
+    entityType: "EMPLOYEE",
+    entityId: employee.id,
+    metadata: {
+      before: { id, name, role, email },
+      after: { name, role, email },
+    },
+  });
+
+  res.json(employee);
+});
+
+// Archive (soft delete) an employee (admin only)
+app.delete("/admin/employees/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
+  const user = req.user!;
+
+  if (user.role !== "ADMIN") {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  const id = Number(req.params.id);
+
+  await prisma.employee.update({
+    where: { id },
+    data: {
+      deletedAt: new Date(),
+      deletedBy: user.id,
+    },
+  });
+
+  await logAudit({
+    companyId: user.companyId,
+    employeeId: user.id,
+    action: "EMPLOYEE_DELETED",
+    entityType: "EMPLOYEE",
+    entityId: id,
+  });
+
+  res.json({ success: true });
+});
+
+// Restore a soft-deleted employee (admin only)
+app.post("/admin/employees/:id/restore", requireAuth, async (req: AuthenticatedRequest, res) => {
+  const user = req.user!;
+
+  if (user.role !== "ADMIN") {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  const id = Number(req.params.id);
+
+  await prisma.employee.update({
+    where: { id },
+    data: {
+      deletedAt: null,
+      deletedBy: null,
+    },
+  });
+
+  await logAudit({
+    companyId: user.companyId,
+    employeeId: user.id,
+    action: "EMPLOYEE_RESTORED",
+    entityType: "EMPLOYEE",
+    entityId: id,
+  });
+
+  res.json({ success: true });
+});
 
 // --- Jobs ---
 
@@ -107,7 +245,8 @@ app.post("/admin/employees", requireAuth, async (req: AuthenticatedRequest, res)
 app.get("/jobs", requireAuth, async (req: AuthenticatedRequest, res) => {
   const jobs = await prisma.job.findMany({
     where: {
-      companyId: req.user!.companyId
+      companyId: req.user!.companyId,
+      deletedAt: null,
     },
     orderBy: { name: "asc" }
   });
@@ -115,8 +254,26 @@ app.get("/jobs", requireAuth, async (req: AuthenticatedRequest, res) => {
   res.json(jobs);
 });
 
+// Admin: list jobs INCLUDING archived
+app.get("/admin/jobs", requireAuth, async (req: AuthenticatedRequest, res) => {
+  const user = req.user!
+
+  if (user.role !== "ADMIN") {
+    return res.status(403).json({ error: "Forbidden" })
+  }
+
+  const jobs = await prisma.job.findMany({
+    where: {
+      companyId: user.companyId
+    },
+    orderBy: { name: "asc" }
+  });
+
+  res.json(jobs)
+});
+
 // Create a job (admin only) for the current company
-app.post("/jobs", requireAuth, async (req: AuthenticatedRequest, res) => {
+app.post("/admin/jobs", requireAuth, async (req: AuthenticatedRequest, res) => {
   const user = req.user!;
 
   if (user.role !== "ADMIN") {
@@ -152,7 +309,134 @@ app.post("/jobs", requireAuth, async (req: AuthenticatedRequest, res) => {
     },
   });
 
+  await logAudit({
+    companyId: user.companyId,
+    employeeId: user.id,
+    action: "JOB_CREATED",
+    entityType: "JOB",
+    entityId: job.id,
+    metadata: {
+      name,
+      addressLine1,
+      addressLine2,
+      city,
+      state,
+      postalCode,
+      country: country ?? "US",
+      jobNote,
+    },
+  });
+
   res.status(201).json(job);
+});
+
+// Edit a job (admin only)
+app.put("/admin/jobs/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
+  const user = req.user!
+  const id = Number(req.params.id)
+
+  if (user.role !== "ADMIN") {
+    return res.status(403).json({ error: "Forbidden" })
+  }
+
+  const {
+    name, addressLine1, addressLine2, city, state, postalCode, country, jobNote
+  } = req.body
+
+  // fetch before state
+  const before = await prisma.job.findUnique({
+    where: { id }
+  })
+
+  if (!before || before.companyId !== user.companyId) {
+    return res.status(404).json({ error: "Job not found" })
+  }
+
+  const job = await prisma.job.update({
+    where: { id },
+    data: {
+      name,
+      addressLine1,
+      addressLine2,
+      city,
+      state,
+      postalCode,
+      country,
+      jobNote,
+    },
+  })
+
+  await logAudit({
+    companyId: user.companyId,
+    employeeId: user.id,
+    action: "JOB_UPDATED",
+    entityType: "JOB",
+    entityId: job.id,
+    metadata: {
+      before: { id, name, addressLine1, addressLine2, city, state, postalCode, country, jobNote },
+      after: { name, addressLine1, addressLine2, city, state, postalCode, country, jobNote },
+    },
+  });
+
+  res.json(job)
+})
+
+// Archive (soft delete) a job (admin only)
+app.delete("/admin/jobs/:id", requireAuth, async (req: AuthenticatedRequest, res) => {
+  const user = req.user!;
+
+  if (user.role !== "ADMIN") {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  const id = Number(req.params.id);
+
+  await prisma.job.update({
+    where: { id },
+    data: {
+      deletedAt: new Date(),
+      deletedBy: user.id,
+    },
+  });
+
+  await logAudit({
+    companyId: user.companyId,
+    employeeId: user.id,
+    action: "JOB_DELETED",
+    entityType: "JOB",
+    entityId: id,
+  });
+
+  res.json({ success: true });
+});
+
+// Restore a soft-deleted job (admin only)
+app.post("/admin/jobs/:id/restore", requireAuth, async (req: AuthenticatedRequest, res) => {
+  const user = req.user!;
+
+  if (user.role !== "ADMIN") {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  const id = Number(req.params.id);
+
+  await prisma.job.update({
+    where: { id },
+    data: {
+      deletedAt: null,
+      deletedBy: null,
+    },
+  });
+
+  await logAudit({
+    companyId: user.companyId,
+    employeeId: user.id,
+    action: "JOB_RESTORED",
+    entityType: "JOB",
+    entityId: id,
+  });
+
+  res.json({ success: true });
 });
 
 // --- Time entries ---
@@ -172,6 +456,7 @@ app.post("/time-entries", requireAuth, async (req: AuthenticatedRequest, res) =>
     where: {
       id: Number(jobId),
       companyId: req.user!.companyId,
+      deletedAt: null,
     },
   });
 
@@ -236,6 +521,28 @@ app.get("/time-entries", requireAuth, async (req: AuthenticatedRequest, res) => 
 
   res.json(entries);
 });
+
+// --- Audit Logs ---
+
+// Admin: view audit log for the company
+app.get("/admin/audit-log", requireAuth, async (req: AuthenticatedRequest, res) => {
+  const user = req.user!
+
+  if (user.role !== "ADMIN") {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  const logs = await prisma.auditLog.findMany({
+    where: { companyId: user.companyId },
+    orderBy: { timestamp: "desc" },
+    include: {
+      employee: { select: { id: true, name: true } }
+    }
+  });
+
+  res.json(logs);
+});
+
 
 // --- Start server ---
 const port = process.env.PORT || 4000;
