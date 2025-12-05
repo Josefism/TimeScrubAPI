@@ -7,109 +7,142 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum Role {
-  EMPLOYEE
-  ADMIN
-}
-
 model Company {
-  id            Int          @id @default(autoincrement())
-  name          String
-  addressLine1  String
-  addressLine2  String?
-  city          String
-  state         String
-  postalCode    String
-  country       String       @default("US")
-  phone         String?
-
-  employees     Employee[]
-  jobs          Job[]
-  timeEntries   TimeEntry[]
-  auditLogs     AuditLog[]
-
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
-}
-
-model Employee {
-  id           Int          @id @default(autoincrement())
-  company      Company      @relation(fields: [companyId], references: [id])
-  companyId    Int
-
-  email        String       @unique
+  id           Int         @id @default(autoincrement())
   name         String
-  role         Role         @default(EMPLOYEE)
-  passwordHash String
-
-  timeEntries  TimeEntry[]
-
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-
-  deletedAt     DateTime?   @db.DateTime
-  deletedBy     Int?
-  deletedByUser Employee?   @relation("DeletedEmployeesBy", fields: [deletedBy], references: [id])
-
-  deletedJobs   Job[]        @relation("DeletedJobsBy")
-  deletedEmployees Employee[] @relation("DeletedEmployeesBy")
-
-  auditLogs     AuditLog[]
-
-  @@index([companyId])
-  @@index([deletedAt])
-}
-
-model Job {
-  id           Int          @id @default(autoincrement())
-  company      Company      @relation(fields: [companyId], references: [id])
-  companyId    Int
-
-  name         String
-
   addressLine1 String
   addressLine2 String?
   city         String
   state        String
   postalCode   String
-  country      String       @default("US")
-
-  jobNote      String?      // admin notes for employees
-
-  active       Boolean      @default(true)
-
+  country      String      @default("US")
+  phone        String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  auditLogs    AuditLog[]
+  customers    Customer[]
+  employees    Employee[]
+  jobs         Job[]
   timeEntries  TimeEntry[]
+}
 
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-
-  deletedAt    DateTime?    @db.DateTime
-  deletedBy    Int?
-  deletedByUser Employee?   @relation("DeletedJobsBy", fields: [deletedBy], references: [id])
+model Employee {
+  id               Int         @id @default(autoincrement())
+  companyId        Int
+  email            String      @unique
+  name             String
+  role             Role        @default(EMPLOYEE)
+  passwordHash     String
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+  deletedAt        DateTime?   @db.DateTime(0)
+  deletedBy        Int?
+  auditLogs        AuditLog[]
+  company          Company     @relation(fields: [companyId], references: [id])
+  deletedByUser    Employee?   @relation("DeletedEmployeesBy", fields: [deletedBy], references: [id])
+  deletedEmployees Employee[]  @relation("DeletedEmployeesBy")
+  deletedJobs      Job[]       @relation("DeletedJobsBy")
+  timeEntries      TimeEntry[]
 
   @@index([companyId])
   @@index([deletedAt])
+  @@index([deletedBy], map: "Employee_deletedBy_fkey")
+}
+
+model Customer {
+  id                   Int           @id @default(autoincrement())
+  companyId            Int
+  name                 String
+  contactName          String?
+  contactEmail         String?
+  contactPhone         String?
+  businessAddressLine1 String
+  businessAddressLine2 String?
+  businessCity         String
+  businessState        String
+  businessPostalCode   String
+  businessCountry      String        @default("US")
+  mailingAddressLine1  String?
+  mailingAddressLine2  String?
+  mailingCity          String?
+  mailingState         String?
+  mailingPostalCode    String?
+  mailingCountry       String?       @default("US")
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+  deletedAt            DateTime?
+  deletedBy            Int?
+  company              Company       @relation(fields: [companyId], references: [id])
+  jobs                 Job[]
+  locations            JobLocation[]
+
+  @@index([companyId])
+}
+
+model JobLocation {
+  id                Int       @id @default(autoincrement())
+  customerId        Int
+  name              String?
+  addressLine1      String
+  addressLine2      String?
+  city              String
+  state             String
+  postalCode        String
+  country           String    @default("US")
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  deletedAt         DateTime?
+  deletedBy         Int?
+  locationType      String?
+  internalNote      String?   @db.Text
+  accessInstruction String?   @db.Text
+  latitude          Float?
+  longitude         Float?
+  isPrimary         Boolean   @default(false)
+  tags              Json?
+  jobs              Job[]
+  customer          Customer  @relation(fields: [customerId], references: [id])
+
+  @@index([customerId])
+}
+
+model Job {
+  id            Int         @id @default(autoincrement())
+  companyId     Int
+  customerId    Int
+  locationId    Int
+  name          String
+  jobNote       String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  deletedAt     DateTime?   @db.DateTime(0)
+  deletedBy     Int?
+  company       Company     @relation(fields: [companyId], references: [id])
+  customer      Customer    @relation(fields: [customerId], references: [id])
+  deletedByUser Employee?   @relation("DeletedJobsBy", fields: [deletedBy], references: [id])
+  location      JobLocation @relation(fields: [locationId], references: [id])
+  timeEntries   TimeEntry[]
+
+  @@index([companyId])
+  @@index([customerId])
+  @@index([locationId])
+  @@index([deletedAt])
+  @@index([deletedBy], map: "Job_deletedBy_fkey")
 }
 
 model TimeEntry {
-  id          Int       @id @default(autoincrement())
-
-  company     Company   @relation(fields: [companyId], references: [id])
-  companyId   Int
-
-  employee    Employee  @relation(fields: [employeeId], references: [id])
-  employeeId  Int
-
-  job         Job       @relation(fields: [jobId], references: [id])
-  jobId       Int
-
-  start       DateTime
-  end         DateTime
-  durationMs  Int
-
-  timeNote    String?   // employee note for admin
-
-  createdAt   DateTime  @default(now())
+  id         Int      @id @default(autoincrement())
+  companyId  Int
+  employeeId Int
+  jobId      Int
+  start      DateTime
+  end        DateTime
+  durationMs Int
+  timeNote   String?
+  createdAt  DateTime @default(now())
+  company    Company  @relation(fields: [companyId], references: [id])
+  employee   Employee @relation(fields: [employeeId], references: [id])
+  job        Job      @relation(fields: [jobId], references: [id])
 
   @@index([companyId, start])
   @@index([employeeId, start])
@@ -117,19 +150,23 @@ model TimeEntry {
 }
 
 model AuditLog {
-  id          Int       @id @default(autoincrement())
-  companyId   Int       // whose data this applies to
-  employeeId  Int       // who performed the action
-  action      String    // e.g. "JOB_ARCHIVED", "EMPLOYEE_CREATED", etc.
-  entityType  String    // "job", "employee", "time_entry", "company"
-  entityId    Int
-  timestamp   DateTime  @default(now())
-  metadata    Json?
-
-  employee    Employee  @relation(fields: [employeeId], references: [id])
-  company     Company   @relation(fields: [companyId], references: [id])
+  id         Int      @id @default(autoincrement())
+  companyId  Int
+  employeeId Int
+  action     String
+  entityType String
+  entityId   Int
+  timestamp  DateTime @default(now())
+  metadata   Json?
+  company    Company  @relation(fields: [companyId], references: [id])
+  employee   Employee @relation(fields: [employeeId], references: [id])
 
   @@index([companyId])
   @@index([employeeId])
   @@index([entityType, entityId])
+}
+
+enum Role {
+  EMPLOYEE
+  ADMIN
 }
